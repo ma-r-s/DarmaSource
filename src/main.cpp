@@ -4,8 +4,9 @@
 #include <DHT.h>
 #include <SPI.h>
 #include <ESP32Servo.h>
-
-#define DHTPIN 17
+#include <WiFi.h>
+#include <WebServer.h>
+#include <ArduinoJson.h>
 
 #define TRG1 14
 #define ECH1 27
@@ -13,14 +14,21 @@
 #define ECH2 25
 #define TRG3 21
 #define ECH3 19
-#define DHTPIN 17
-#define LUZ 33
+#define DHTPIN 33
+#define LUZ 39
 #define SERV 16
 #define AGUA 22
 #define BOTON 32
+#define ARRSIZE 10
+
+const char *ssid = "Darma";
+const char *password = "123456789";
 
 Servo myservo;
 DHT dht(DHTPIN, DHT11);
+WebServer server(80);
+StaticJsonDocument<250> jsonDocument;
+char buffer[250];
 
 int dist1[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 int dist2[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
@@ -31,10 +39,12 @@ int luz[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 
 U8G2_PCD8544_84X48_F_4W_HW_SPI u8g2(U8G2_R0, /* cs=*/15, /* dc=*/4, /* reset=*/2); // Nokia 5110 Display
 
+TaskHandle_t Task1;
+TaskHandle_t Task2;
+
 void push(int val, int *arreglo)
 {
-  int size = sizeof(arreglo);
-  for (int i = size - 2; i >= 0; i--)
+  for (int i = ARRSIZE - 2; i >= 0; i--)
   {
     arreglo[i + 1] = arreglo[i];
   }
@@ -72,19 +82,25 @@ int leerTemperatura(int *arreglo)
 {
 
   int t = dht.readTemperature();
+  Serial.println(t);
   if (isnan(t))
   {
     Serial.println(F("Fallo leyendo temperatura"));
   }
   push(t, temperatura);
+  Serial.print("Temperatura: ");
+  for (int i = 0; i < ARRSIZE; i++)
+  {
+    Serial.print(temperatura[i]);
+    Serial.print(" ,");
+  }
+  Serial.println("");
   return t;
 }
 
 int leerLuz(int *arreglo)
 {
   int val = analogRead(LUZ);
-  Serial.print("Luz: ");
-  Serial.println(val);
   push(val, arreglo);
   return val;
 }
@@ -121,26 +137,89 @@ void inicializarPines()
   pinMode(AGUA, OUTPUT);
   myservo.attach(SERV);
   myservo.write(0);
-
   dht.begin();
+}
+
+void handlePost()
+{
+  server.send(200, "application/json", "{}");
+}
+
+void add_json_object(int nDato, int value, char *meta)
+{
+  JsonObject obj = jsonDocument.createNestedObject();
+  obj["meta"] = meta;
+  obj["nDato"] = nDato;
+  obj["value"] = value;
+}
+
+void getTemperature()
+{
+  Serial.println("Get temperature");
+  jsonDocument.clear();
+  for (int i = 0; i < ARRSIZE; i++)
+  {
+    add_json_object(i, temperatura[i], "temp");
+    Serial.println(temperatura[i]);
+  }
+  serializeJson(jsonDocument, buffer);
+  server.send(200, "application/json", buffer);
+}
+
+void wifi(void *pvParameters)
+{
+  WiFi.softAP(ssid, password);
+  IPAddress IP = WiFi.softAPIP();
+  Serial.print("AP IP address: ");
+  Serial.println(IP);
+  server.on("/temperature", getTemperature);
+  server.on("/led", HTTP_POST, handlePost);
+  server.begin();
+  for (;;)
+  {
+    server.handleClient();
+  }
+}
+
+void hardware(void *pvParameters)
+{
+  u8g2.begin();
+  u8g2.setFont(u8g2_font_helvR08_tr);
+  inicializarPines();
+  for (;;)
+  {
+    pantalla();
+    leerDistancia(TRG1, ECH1, dist1);
+    leerDistancia(TRG2, ECH2, dist2);
+    leerDistancia(TRG3, ECH3, dist3);
+    leerHumedad(humedad);
+    leerTemperatura(temperatura);
+    leerLuz(luz);
+  }
 }
 
 void setup()
 {
   Serial.begin(115200);
-  u8g2.begin();
-  u8g2.setFont(u8g2_font_helvR08_tr);
-  inicializarPines();
+  xTaskCreatePinnedToCore(
+      wifi,    /* Task function. */
+      "Task1", /* name of task. */
+      10000,   /* Stack size of task */
+      NULL,    /* parameter of the task */
+      1,       /* priority of the task */
+      &Task1,  /* Task handle to keep track of created task */
+      0);      /* pin task to core 0 */
+
+  xTaskCreatePinnedToCore(
+      hardware, /* Task function. */
+      "Task2",  /* name of task. */
+      10000,    /* Stack size of task */
+      NULL,     /* parameter of the task */
+      1,        /* priority of the task */
+      &Task2,   /* Task handle to keep track of created task */
+      1);       /* pin task to core 1 */
 }
 
 void loop()
 {
-  pantalla();
-  leerDistancia(TRG1, ECH1, dist1);
-  leerDistancia(TRG2, ECH2, dist2);
-  leerDistancia(TRG3, ECH3, dist3);
-  leerHumedad(humedad);
-  leerTemperatura(temperatura);
-  leerLuz(luz);
-  delay(2000);
 }
