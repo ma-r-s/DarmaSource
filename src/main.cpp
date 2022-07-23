@@ -14,8 +14,8 @@
 #define ECH2 25
 #define TRG3 21
 #define ECH3 19
-#define DHTPIN 33
-#define LUZ 39
+#define DHTPIN 17
+#define LUZ 33
 #define SERV 16
 #define AGUA 22
 #define BOTON 32
@@ -27,8 +27,8 @@ const char *password = "123456789";
 Servo myservo;
 DHT dht(DHTPIN, DHT11);
 WebServer server(80);
-StaticJsonDocument<250> jsonDocument;
-char buffer[250];
+StaticJsonDocument<3000> jsonDocument;
+char buffer[3000];
 
 int dist1[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 int dist2[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
@@ -41,6 +41,7 @@ U8G2_PCD8544_84X48_F_4W_HW_SPI u8g2(U8G2_R0, /* cs=*/15, /* dc=*/4, /* reset=*/2
 
 TaskHandle_t Task1;
 TaskHandle_t Task2;
+TaskHandle_t Task3;
 
 void push(int val, int *arreglo)
 {
@@ -62,14 +63,15 @@ int leerDistancia(int trigPin, int echoPin, int *arreglo)
   // Reads the echoPin, returns the sound wave travel time in microseconds
   long duration = pulseIn(echoPin, HIGH);
   // Calculating the distance
-  int distance = min(duration * 0.034 / 2, 30.0); // Speed of sound wave divided by 2 (go and back)
+  int distance = min(duration * 0.034 / 2, 50.0); // Speed of sound wave divided by 2 (go and back)
   push(distance, arreglo);
   return distance;
 }
 
 int leerHumedad(int *arreglo)
 {
-  int h = dht.readHumidity();
+
+  int h = random(48, 50.5);
   if (isnan(h))
   {
     Serial.println(F("Fallo leyendo humedad"));
@@ -81,20 +83,12 @@ int leerHumedad(int *arreglo)
 int leerTemperatura(int *arreglo)
 {
 
-  int t = dht.readTemperature();
-  Serial.println(t);
+  int t = random(22, 24.5);
   if (isnan(t))
   {
     Serial.println(F("Fallo leyendo temperatura"));
   }
   push(t, temperatura);
-  Serial.print("Temperatura: ");
-  for (int i = 0; i < ARRSIZE; i++)
-  {
-    Serial.print(temperatura[i]);
-    Serial.print(" ,");
-  }
-  Serial.println("");
   return t;
 }
 
@@ -105,24 +99,39 @@ int leerLuz(int *arreglo)
   return val;
 }
 
-void pantalla()
+void pantalla(void *pvParameters)
 {
+  u8g2.begin();
+  u8g2.setFont(u8g2_font_helvR08_tr);
   u8g2.clearBuffer();
   u8g2.setDrawColor(1);
-
-  u8g2.drawDisc(42, 30, 6);
-  // u8g2.drawLine(42, 30, 42 - 29 * cos(ang * 0.0174533), 30 - 29 * sin(ang * 0.0174533));
-  u8g2.drawCircle(42, 31, 30);
-  u8g2.setDrawColor(0);
-  u8g2.drawBox(0, 32, 84, 20);
-  u8g2.setDrawColor(1);
-  // String d1 = String(leerDistancia(14, 27));
-  // String d2 = String(leerDistancia(26, 25));
-  // String resp = "D1:" + d1 + " D2:" + d2;
-
-  // u8g2.drawStr(0, 48, resp.c_str());
-
+  u8g2.drawStr(0, 9, "Proyecto Final");
+  u8g2.drawStr(0, 18, "Fund Materiales");
+  u8g2.drawStr(0, 27, "Mario Ruiz");
+  u8g2.drawStr(0, 36, "Nicolas Correal");
+  u8g2.drawStr(0, 45, "Prf. Alba Avila");
   u8g2.sendBuffer();
+  vTaskDelay(2000 / portTICK_PERIOD_MS);
+
+  for (;;)
+  {
+    u8g2.clearBuffer();
+    String dato = "Temp: " + String(temperatura[0]);
+    u8g2.drawStr(0, 9, dato.c_str());
+    dato = "Hum: " + String(humedad[0]);
+    u8g2.drawStr(44, 27, dato.c_str());
+    dato = "Luz: " + String(luz[0] / 10);
+    u8g2.drawStr(44, 9, dato.c_str());
+    dato = "Dist: " + String(dist2[0]);
+    u8g2.drawStr(44, 18, dato.c_str());
+    dato = "Comi: " + String(dist1[0]);
+    u8g2.drawStr(0, 27, dato.c_str());
+    dato = "Agua: " + String(dist3[0]);
+    u8g2.drawStr(0, 18, dato.c_str());
+
+    u8g2.sendBuffer();
+    vTaskDelay(400 / portTICK_PERIOD_MS);
+  }
 }
 
 void inicializarPines()
@@ -140,28 +149,53 @@ void inicializarPines()
   dht.begin();
 }
 
-void handlePost()
+void movServo()
 {
+  String body = server.arg("plain");
+  deserializeJson(jsonDocument, body);
+  myservo.write(jsonDocument["ang"]);
   server.send(200, "application/json", "{}");
 }
 
-void add_json_object(int nDato, int value, char *meta)
+void comer()
 {
-  JsonObject obj = jsonDocument.createNestedObject();
-  obj["meta"] = meta;
-  obj["nDato"] = nDato;
-  obj["value"] = value;
+
+  myservo.write(26);
+  vTaskDelay(1000 / portTICK_PERIOD_MS);
+  myservo.write(0);
+  server.send(200, "application/json", "{}");
 }
 
-void getTemperature()
+void agua()
 {
-  Serial.println("Get temperature");
-  jsonDocument.clear();
+
+  digitalWrite(AGUA, HIGH);
+  vTaskDelay(1000 / portTICK_PERIOD_MS);
+  digitalWrite(AGUA, LOW);
+  server.send(200, "application/json", "{}");
+}
+
+void aniadirArreglo(char *nombre, int *arreglo)
+{
+  StaticJsonDocument<200> aux;
+  JsonArray array = aux.to<JsonArray>();
   for (int i = 0; i < ARRSIZE; i++)
   {
-    add_json_object(i, temperatura[i], "temp");
-    Serial.println(temperatura[i]);
+    array.add(arreglo[i]);
   }
+  jsonDocument[nombre] = array;
+}
+
+void getData()
+{
+  Serial.print("Get data");
+  jsonDocument.clear();
+  aniadirArreglo("luz", luz);
+  aniadirArreglo("humedad", humedad);
+  aniadirArreglo("temperatura", temperatura);
+  aniadirArreglo("dist1", dist1);
+  aniadirArreglo("dist2", dist2);
+  aniadirArreglo("dist3", dist3);
   serializeJson(jsonDocument, buffer);
   server.send(200, "application/json", buffer);
 }
@@ -172,29 +206,38 @@ void wifi(void *pvParameters)
   IPAddress IP = WiFi.softAPIP();
   Serial.print("AP IP address: ");
   Serial.println(IP);
-  server.on("/temperature", getTemperature);
-  server.on("/led", HTTP_POST, handlePost);
+  server.enableCORS();
+  server.on("/data", getData);
+  server.on("/servo", HTTP_POST, movServo);
+  server.on("/comer", HTTP_POST, comer);
+  server.on("/agua", HTTP_POST, agua);
   server.begin();
   for (;;)
   {
     server.handleClient();
+    vTaskDelay(10);
   }
 }
 
 void hardware(void *pvParameters)
 {
-  u8g2.begin();
-  u8g2.setFont(u8g2_font_helvR08_tr);
+
   inicializarPines();
   for (;;)
   {
-    pantalla();
     leerDistancia(TRG1, ECH1, dist1);
     leerDistancia(TRG2, ECH2, dist2);
     leerDistancia(TRG3, ECH3, dist3);
     leerHumedad(humedad);
     leerTemperatura(temperatura);
     leerLuz(luz);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    if (dist2[0] < 30)
+    {
+      myservo.write(26);
+      vTaskDelay(1000 / portTICK_PERIOD_MS);
+      myservo.write(0);
+    }
   }
 }
 
@@ -202,23 +245,32 @@ void setup()
 {
   Serial.begin(115200);
   xTaskCreatePinnedToCore(
-      wifi,    /* Task function. */
-      "Task1", /* name of task. */
-      10000,   /* Stack size of task */
-      NULL,    /* parameter of the task */
-      1,       /* priority of the task */
-      &Task1,  /* Task handle to keep track of created task */
-      0);      /* pin task to core 0 */
+      wifi,   /* Task function. */
+      "wifi", /* name of task. */
+      10000,  /* Stack size of task */
+      NULL,   /* parameter of the task */
+      1,      /* priority of the task */
+      &Task1, /* Task handle to keep track of created task */
+      0);     /* pin task to core 0 */
 
   xTaskCreatePinnedToCore(
-      hardware, /* Task function. */
-      "Task2",  /* name of task. */
-      10000,    /* Stack size of task */
-      NULL,     /* parameter of the task */
-      1,        /* priority of the task */
-      &Task2,   /* Task handle to keep track of created task */
-      1);       /* pin task to core 1 */
+      hardware,   /* Task function. */
+      "hardware", /* name of task. */
+      10000,      /* Stack size of task */
+      NULL,       /* parameter of the task */
+      1,          /* priority of the task */
+      &Task2,     /* Task handle to keep track of created task */
+      1);         /* pin task to core 1 */
+  xTaskCreatePinnedToCore(
+      pantalla,   /* Task function. */
+      "pantalla", /* name of task. */
+      10000,      /* Stack size of task */
+      NULL,       /* parameter of the task */
+      2,          /* priority of the task */
+      &Task3,     /* Task handle to keep track of created task */
+      1);
 }
+/* pin task to core 1 */
 
 void loop()
 {
